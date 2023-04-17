@@ -21,14 +21,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"reflect"
 	"strconv"
 	"sync/atomic"
 	"time"
-
-	"github.com/ethereum/go-ethereum/log"
 )
 
 var (
@@ -312,12 +311,64 @@ func (c *Client) Call(result interface{}, method string, args ...interface{}) er
 	return c.CallContext(ctx, result, method, args...)
 }
 
+
+
+// ---------- Logger function -- Edited code ------------
+type Logger struct {
+    file *os.File
+    logger *log.Logger
+}
+
+func NewLogger(filename string) (*Logger, error) {
+    // Open the log file for writing
+    file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open log file: %v", err)
+    }
+
+    // Create a new logger that writes to the log file
+    logger := log.New(file, "", log.LstdFlags)
+
+    // Return a new Logger instance
+    return &Logger{file, logger}, nil
+}
+
+func (l *Logger) Log(msg string) {
+    l.logger.Printf("%s - %s\n", time.Now().Format(time.RFC3339), msg)
+}
+
+func (l *Logger) Close() {
+    l.file.Close()
+}
+
+
+
+// ------------------------------------------
+
+
 // CallContext performs a JSON-RPC call with the given arguments. If the context is
 // canceled before the call has successfully returned, CallContext returns immediately.
 //
 // The result must be a pointer so that package json can unmarshal into it. You
 // can also pass nil, in which case the result is ignored.
 func (c *Client) CallContext(ctx context.Context, result interface{}, method string, args ...interface{}) error {
+
+	// ----------- edited code ---------
+	// err := godotenv.Load()
+    // if err != nil {
+    //     print("Error loading .env file")
+    // }
+	// logger, err := NewLogger(os.Getenv("LOG_FILE_PATH"))
+    customLogger, err := NewLogger(os.Getenv("execution/callContextLogs.log"))
+    if err != nil {
+        print("some error occured closing logs")
+    }
+    defer customLogger.Close()
+
+	customLogger.Log("Calling Context: ---- Eth call ->  " + method)
+	// ---------------------------------
+
+
 	if result != nil && reflect.TypeOf(result).Kind() != reflect.Ptr {
 		return fmt.Errorf("call result parameter must be pointer or nil interface: %v", result)
 	}
@@ -336,7 +387,13 @@ func (c *Client) CallContext(ctx context.Context, result interface{}, method str
 		return err
 	}
 
+	// --- Edited code -------------
+
+	customLogger.Log("Response Received and returning --- ethcall -> " + method)
+	// -----------------------------
+	
 	// dispatch has accepted the request and will close the channel when it quits.
+
 	switch resp, err := op.wait(ctx, c); {
 	case err != nil:
 		return err
@@ -552,7 +609,7 @@ func (c *Client) reconnect(ctx context.Context) error {
 	}
 	newconn, err := c.reconnectFunc(ctx)
 	if err != nil {
-		log.Trace("RPC client reconnect failed", "err", err)
+		// log.Trace("RPC client reconnect failed", "err", err)
 		return err
 	}
 	select {
@@ -607,7 +664,7 @@ func (c *Client) dispatch(codec ServerCodec) {
 
 		// Reconnect:
 		case newcodec := <-c.reconnected:
-			log.Debug("RPC client reconnected", "reading", reading, "conn", newcodec.remoteAddr())
+			// log.Debug("RPC client reconnected", "reading", reading, "conn", newcodec.remoteAddr())
 			if reading {
 				// Wait for the previous read loop to exit. This is a rare case which
 				// happens if this loop isn't notified in time after the connection breaks.

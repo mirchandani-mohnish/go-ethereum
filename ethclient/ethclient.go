@@ -22,7 +22,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
+	"os"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -35,6 +38,42 @@ import (
 type Client struct {
 	c *rpc.Client
 }
+
+
+
+//----------------Edit Code Start----------------
+
+type Logger struct {
+    file *os.File
+    logger *log.Logger
+}
+
+func NewLogger(filename string) (*Logger, error) {
+    // Open the log file for writing
+    file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open log file: %v", err)
+    }
+
+    // Create a new logger that writes to the log file
+    logger := log.New(file, "", log.LstdFlags)
+
+    // Return a new Logger instance
+    return &Logger{file, logger}, nil
+}
+
+func (l *Logger) Log(msg string) {
+    l.logger.Printf("%s - %s\n", time.Now().Format(time.RFC3339), msg)
+}
+
+func (l *Logger) Close() {
+    l.file.Close()
+}
+
+
+// --------------------Edit code end-----------------------------
+
+
 
 // Dial connects a client to the given URL.
 func Dial(rawurl string) (*Client, error) {
