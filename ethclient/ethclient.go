@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	lru "github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -41,7 +42,12 @@ type Client struct {
 
 
 
+
+
+
 //----------------Edit Code Start----------------
+
+// Logging function
 
 type Logger struct {
     file *os.File
@@ -71,9 +77,26 @@ func (l *Logger) Close() {
 }
 
 
+
 // --------------------Edit code end-----------------------------
 
 
+
+
+// --------------------Edit code start----------------------------
+
+
+type rpcLRU = lru.Cache[common.Hash, common.Address]
+
+
+
+
+
+
+
+
+
+// ------------------Edit code end---------------------------------
 
 // Dial connects a client to the given URL.
 func Dial(rawurl string) (*Client, error) {

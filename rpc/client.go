@@ -17,6 +17,7 @@
 package rpc
 
 import (
+	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -37,6 +39,8 @@ var (
 	ErrSubscriptionQueueOverflow = errors.New("subscription queue overflow")
 	errClientReconnected         = errors.New("client reconnected")
 	errDead                      = errors.New("connection lost")
+
+	
 )
 
 const (
@@ -346,12 +350,98 @@ func (l *Logger) Close() {
 // ------------------------------------------
 
 
+
+// -------------LRU Cache  Edited Code -----------------
+
+
+type cache struct {
+	size       int
+	items      map[interface{}]*list.Element
+	evictList  *list.List
+	lock       sync.Mutex
+}
+
+
+type entry struct {
+	key   interface{}
+	value *jsonrpcMessage
+}
+
+func newCache(size int) *cache {
+	return &cache{
+		size:      size,
+		items:     make(map[interface{}]*list.Element),
+		evictList: list.New(),
+	}
+}
+
+func (c *cache) Add(key interface{}, value *jsonrpcMessage) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	// Check if the key already exists in the cache
+	if item, ok := c.items[key]; ok {
+		// If the key exists, update the value and move the item to the front of the list
+		c.evictList.MoveToFront(item)
+		item.Value.(*entry).value = value
+		return
+	}
+
+	// If the key doesn't exist, add a new entry to the cache and move it to the front of the list
+	item := c.evictList.PushFront(&entry{key, value})
+	c.items[key] = item
+
+	// If the cache size exceeds the maximum size, remove the least recently used item from the cache
+	if c.evictList.Len() > c.size {
+		last := c.evictList.Back()
+		if last != nil {
+			c.evictList.Remove(last)
+				delete(c.items, last.Value.(*entry).key)
+		}
+	}
+}
+
+func (c *cache) Get(key interface{}) (value interface{}, ok bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if item, ok := c.items[key]; ok {
+		// If the key exists in the cache, move it to the front of the list and return the value
+		c.evictList.MoveToFront(item)
+		return item.Value.(*entry).value, true
+	}
+
+	// If the key doesn't exist in the cache, return nil and false
+	return nil, false
+}
+
+
+
+// -----------------------------------------------------------------------
+
+
+
+
+
+
+// -----------------------------------------------------------------------
+// Defining the cache 
+
+
+var lruCache = newCache(4096);
+
+
+// -----------------------------------------------------------------------
+
 // CallContext performs a JSON-RPC call with the given arguments. If the context is
 // canceled before the call has successfully returned, CallContext returns immediately.
 //
 // The result must be a pointer so that package json can unmarshal into it. You
 // can also pass nil, in which case the result is ignored.
 func (c *Client) CallContext(ctx context.Context, result interface{}, method string, args ...interface{}) error {
+
+
+
 
 	// ----------- edited code ---------
 	// err := godotenv.Load()
@@ -368,6 +458,20 @@ func (c *Client) CallContext(ctx context.Context, result interface{}, method str
 	customLogger.Log("Calling Context: ---- Eth call ->  " + method)
 	// ---------------------------------
 
+
+	// ---------------------------------
+	// Cache the Calls 
+	// if value, ok := lruCache.Get(method); ok {
+	// 	return json.Unmarshal(value, result)
+	// }else{
+		
+	// }
+	
+
+
+
+
+	// ---------------------------------
 
 	if result != nil && reflect.TypeOf(result).Kind() != reflect.Ptr {
 		return fmt.Errorf("call result parameter must be pointer or nil interface: %v", result)
@@ -386,6 +490,7 @@ func (c *Client) CallContext(ctx context.Context, result interface{}, method str
 	if err != nil {
 		return err
 	}
+
 
 	// --- Edited code -------------
 
