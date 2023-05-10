@@ -22,16 +22,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math/big"
-	"os"
-	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	lru "github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -40,63 +38,38 @@ type Client struct {
 	c *rpc.Client
 }
 
-
-
-
-
-
 //----------------Edit Code Start----------------
 
 // Logging function
 
-type Logger struct {
-    file *os.File
-    logger *log.Logger
-}
+// type Logger struct {
+// 	file   *os.File
+// 	logger *log.Logger
+// }
 
-func NewLogger(filename string) (*Logger, error) {
-    // Open the log file for writing
-    file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-    if err != nil {
-        return nil, fmt.Errorf("failed to open log file: %v", err)
-    }
+// func NewLogger(filename string) (*Logger, error) {
+// 	// Open the log file for writing
+// 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to open log file: %v", err)
+// 	}
 
-    // Create a new logger that writes to the log file
-    logger := log.New(file, "", log.LstdFlags)
+// 	// Create a new logger that writes to the log file
+// 	logger := log.New(file, "", log.LstdFlags)
 
-    // Return a new Logger instance
-    return &Logger{file, logger}, nil
-}
+// 	// Return a new Logger instance
+// 	return &Logger{file, logger}, nil
+// }
 
-func (l *Logger) Log(msg string) {
-    l.logger.Printf("%s - %s\n", time.Now().Format(time.RFC3339), msg)
-}
+// func (l *Logger) Log(msg string) {
+// 	l.logger.Printf("%s - %s\n", time.Now().Format(time.RFC3339), msg)
+// }
 
-func (l *Logger) Close() {
-    l.file.Close()
-}
-
-
+// func (l *Logger) Close() {
+// 	l.file.Close()
+// }
 
 // --------------------Edit code end-----------------------------
-
-
-
-
-// --------------------Edit code start----------------------------
-
-
-type rpcLRU = lru.Cache[common.Hash, common.Address]
-
-
-
-
-
-
-
-
-
-// ------------------Edit code end---------------------------------
 
 // Dial connects a client to the given URL.
 func Dial(rawurl string) (*Client, error) {
@@ -527,6 +500,21 @@ func (ec *Client) PendingTransactionCount(ctx context.Context) (uint, error) {
 	return uint(num), err
 }
 
+// -----------------------edited code --------------------
+// -----------------------LRU cache-----------------------
+
+// type cmsg struct {
+// 	From common.Address
+// 	To   *common.Address
+// 	Data []byte
+// }
+
+type rpcLRU = lru.Cache[string, hexutil.Bytes]
+
+var cache rpcLRU
+
+// -------------------------------------------------------
+
 // Contract Calling
 
 // CallContract executes a message call transaction, which is directly executed in the VM
@@ -537,11 +525,26 @@ func (ec *Client) PendingTransactionCount(ctx context.Context) (uint, error) {
 // blocks might not be available.
 func (ec *Client) CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
 	var hex hexutil.Bytes
-	err := ec.c.CallContext(ctx, &hex, "eth_call", toCallArg(msg), toBlockNumArg(blockNumber))
-	if err != nil {
-		return nil, err
+	// var key cmsg
+	// key.From = msg.From
+	// key.To = msg.To
+	// key.Data = msg.Data
+	var key = string(msg.From[0]) + string(msg.Data)
+
+	val, ok := cache.Get(key)
+
+	if ok {
+		log.Info("Hit - returning Value ")
+		return val, nil
+	} else {
+		log.Info("Miss: - going through function ")
+		err := ec.c.CallContext(ctx, &hex, "eth_call", toCallArg(msg), toBlockNumArg(blockNumber))
+		if err != nil {
+			return nil, err
+		}
+		cache.Add(key, hex)
+		return hex, nil
 	}
-	return hex, nil
 }
 
 // CallContractAtHash is almost the same as CallContract except that it selects

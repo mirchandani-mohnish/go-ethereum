@@ -39,8 +39,6 @@ var (
 	ErrSubscriptionQueueOverflow = errors.New("subscription queue overflow")
 	errClientReconnected         = errors.New("client reconnected")
 	errDead                      = errors.New("connection lost")
-
-	
 )
 
 const (
@@ -315,52 +313,44 @@ func (c *Client) Call(result interface{}, method string, args ...interface{}) er
 	return c.CallContext(ctx, result, method, args...)
 }
 
-
-
 // ---------- Logger function -- Edited code ------------
 type Logger struct {
-    file *os.File
-    logger *log.Logger
+	file   *os.File
+	logger *log.Logger
 }
 
 func NewLogger(filename string) (*Logger, error) {
-    // Open the log file for writing
-    file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-    if err != nil {
-        return nil, fmt.Errorf("failed to open log file: %v", err)
-    }
+	// Open the log file for writing
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open log file: %v", err)
+	}
 
-    // Create a new logger that writes to the log file
-    logger := log.New(file, "", log.LstdFlags)
+	// Create a new logger that writes to the log file
+	logger := log.New(file, "", log.LstdFlags)
 
-    // Return a new Logger instance
-    return &Logger{file, logger}, nil
+	// Return a new Logger instance
+	return &Logger{file, logger}, nil
 }
 
 func (l *Logger) Log(msg string) {
-    l.logger.Printf("%s - %s\n", time.Now().Format(time.RFC3339), msg)
+	l.logger.Printf("%s - %s\n", time.Now().Format(time.RFC3339), msg)
 }
 
 func (l *Logger) Close() {
-    l.file.Close()
+	l.file.Close()
 }
-
-
 
 // ------------------------------------------
 
-
-
 // -------------LRU Cache  Edited Code -----------------
 
-
 type cache struct {
-	size       int
-	items      map[interface{}]*list.Element
-	evictList  *list.List
-	lock       sync.Mutex
+	size      int
+	items     map[interface{}]*list.Element
+	evictList *list.List
+	lock      sync.Mutex
 }
-
 
 type entry struct {
 	key   interface{}
@@ -396,7 +386,7 @@ func (c *cache) Add(key interface{}, value *jsonrpcMessage) {
 		last := c.evictList.Back()
 		if last != nil {
 			c.evictList.Remove(last)
-				delete(c.items, last.Value.(*entry).key)
+			delete(c.items, last.Value.(*entry).key)
 		}
 	}
 }
@@ -415,21 +405,12 @@ func (c *cache) Get(key interface{}) (value interface{}, ok bool) {
 	return nil, false
 }
 
-
-
 // -----------------------------------------------------------------------
 
-
-
-
-
-
 // -----------------------------------------------------------------------
-// Defining the cache 
+// Defining the cache
 
-
-var lruCache = newCache(4096);
-
+var lruCache = newCache(4096)
 
 // -----------------------------------------------------------------------
 
@@ -440,36 +421,28 @@ var lruCache = newCache(4096);
 // can also pass nil, in which case the result is ignored.
 func (c *Client) CallContext(ctx context.Context, result interface{}, method string, args ...interface{}) error {
 
-
-
-
 	// ----------- edited code ---------
 	// err := godotenv.Load()
-    // if err != nil {
-    //     print("Error loading .env file")
-    // }
+	// if err != nil {
+	//     print("Error loading .env file")
+	// }
 	// logger, err := NewLogger(os.Getenv("LOG_FILE_PATH"))
-    customLogger, err := NewLogger(os.Getenv("execution/callContextLogs.log"))
-    if err != nil {
-        print("some error occured closing logs")
-    }
-    defer customLogger.Close()
+	// customLogger, err := NewLogger(os.Getenv("execution/callContextLogs.log"))
+	// if err != nil {
+	// 	print("some error occured closing logs")
+	// }
+	// defer customLogger.Close()
 
-	customLogger.Log("Calling Context: ---- Eth call ->  " + method)
+	// customLogger.Log("Calling Context: ---- Eth call ->  " + method)
 	// ---------------------------------
 
-
 	// ---------------------------------
-	// Cache the Calls 
+	// Cache the Calls
 	// if value, ok := lruCache.Get(method); ok {
 	// 	return json.Unmarshal(value, result)
 	// }else{
-		
+
 	// }
-	
-
-
-
 
 	// ---------------------------------
 
@@ -491,12 +464,11 @@ func (c *Client) CallContext(ctx context.Context, result interface{}, method str
 		return err
 	}
 
-
 	// --- Edited code -------------
 
-	customLogger.Log("Response Received and returning --- ethcall -> " + method)
+	// customLogger.Log("Response Received and returning --- ethcall -> " + method)
 	// -----------------------------
-	
+
 	// dispatch has accepted the request and will close the channel when it quits.
 
 	switch resp, err := op.wait(ctx, c); {
