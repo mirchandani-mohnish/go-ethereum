@@ -532,7 +532,7 @@ func (ec *Client) CallContract(ctx context.Context, msg ethereum.CallMsg, blockN
 	var key = string(msg.From[0]) + string(msg.Data)
 
 	val, ok := cache.Get(key)
-
+	log.Info("-----------------------eth_call---------------------")
 	if ok {
 		log.Info("Hit - returning Value ")
 		return val, nil
@@ -552,6 +552,7 @@ func (ec *Client) CallContract(ctx context.Context, msg ethereum.CallMsg, blockN
 func (ec *Client) CallContractAtHash(ctx context.Context, msg ethereum.CallMsg, blockHash common.Hash) ([]byte, error) {
 	var hex hexutil.Bytes
 	//start----------------------------------------
+	log.Info("-----------------------eth_call---------------------")
 	var key = string(msg.From[0]) + string(msg.Data)
 	val, ok := cache.Get(key)
 	if ok {
@@ -574,6 +575,7 @@ func (ec *Client) CallContractAtHash(ctx context.Context, msg ethereum.CallMsg, 
 func (ec *Client) PendingCallContract(ctx context.Context, msg ethereum.CallMsg) ([]byte, error) {
 	var hex hexutil.Bytes
 	//--------------------------------------------
+	log.Info("-----------------------eth_call---------------------")
 	var key = string(msg.From[0]) + string(msg.Data)
 	val, ok := cache.Get(key)
 	if ok {

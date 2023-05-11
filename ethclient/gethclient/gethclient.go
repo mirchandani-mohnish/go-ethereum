@@ -27,7 +27,9 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -134,13 +136,29 @@ func (ec *Client) GetProof(ctx context.Context, account common.Address, keys []s
 // overrides specifies a map of contract states that should be overwritten before executing
 // the message call.
 // Please use ethclient.CallContract instead if you don't need the override functionality.
+
+type rpcLRU = lru.Cache[string, hexutil.Bytes]
+
+var cache rpcLRU
+
 func (ec *Client) CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int, overrides *map[common.Address]OverrideAccount) ([]byte, error) {
 	var hex hexutil.Bytes
-	err := ec.c.CallContext(
-		ctx, &hex, "eth_call", toCallArg(msg),
-		toBlockNumArg(blockNumber), overrides,
-	)
-	return hex, err
+
+	var key = string(msg.From[0]) + string(msg.Data)
+	val, ok := cache.Get(key)
+
+	if ok {
+		log.Info("Hit - returning Value ")
+		return val, nil
+	} else {
+		log.Info("Miss: - going through function ")
+		err := ec.c.CallContext(
+			ctx, &hex, "eth_call", toCallArg(msg),
+			toBlockNumArg(blockNumber), overrides,
+		)
+		cache.Add(key, hex)
+		return hex, err
+	}
 }
 
 // GCStats retrieves the current garbage collection stats from a geth node.
