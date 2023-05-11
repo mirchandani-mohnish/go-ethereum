@@ -551,22 +551,44 @@ func (ec *Client) CallContract(ctx context.Context, msg ethereum.CallMsg, blockN
 // the block by block hash instead of block height.
 func (ec *Client) CallContractAtHash(ctx context.Context, msg ethereum.CallMsg, blockHash common.Hash) ([]byte, error) {
 	var hex hexutil.Bytes
-	err := ec.c.CallContext(ctx, &hex, "eth_call", toCallArg(msg), rpc.BlockNumberOrHashWithHash(blockHash, false))
-	if err != nil {
-		return nil, err
+	//start----------------------------------------
+	var key = string(msg.From[0]) + string(msg.Data)
+	val, ok := cache.Get(key)
+	if ok {
+		log.Info("Hit - returning Value ")
+		return val, nil
+	} else {
+		log.Info("Miss: - going through function ")
+		//end----------------------------------------
+		err := ec.c.CallContext(ctx, &hex, "eth_call", toCallArg(msg), rpc.BlockNumberOrHashWithHash(blockHash, false))
+		if err != nil {
+			return nil, err
+		}
+		cache.Add(key, hex) // cache add -------------------------
+		return hex, nil
 	}
-	return hex, nil
 }
 
 // PendingCallContract executes a message call transaction using the EVM.
 // The state seen by the contract call is the pending state.
 func (ec *Client) PendingCallContract(ctx context.Context, msg ethereum.CallMsg) ([]byte, error) {
 	var hex hexutil.Bytes
-	err := ec.c.CallContext(ctx, &hex, "eth_call", toCallArg(msg), "pending")
-	if err != nil {
-		return nil, err
+	//--------------------------------------------
+	var key = string(msg.From[0]) + string(msg.Data)
+	val, ok := cache.Get(key)
+	if ok {
+		log.Info("Hit - returning Value ")
+		return val, nil
+	} else {
+		log.Info("Miss: - going through function ")
+		//------------------------------------------
+		err := ec.c.CallContext(ctx, &hex, "eth_call", toCallArg(msg), "pending")
+		if err != nil {
+			return nil, err
+		}
+		cache.Add(key, hex) // cache add -------------------------
+		return hex, nil
 	}
-	return hex, nil
 }
 
 // SuggestGasPrice retrieves the currently suggested gas price to allow a timely
