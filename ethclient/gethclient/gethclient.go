@@ -20,6 +20,7 @@ package gethclient
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"runtime"
 	"runtime/debug"
@@ -143,15 +144,17 @@ var cache rpcLRU
 
 func (ec *Client) CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int, overrides *map[common.Address]OverrideAccount) ([]byte, error) {
 	var hex hexutil.Bytes
-
+	fmt.Println("-----------------------eth_call---------------------")
 	var key = string(msg.From[0]) + string(msg.Data)
 	val, ok := cache.Get(key)
 
 	if ok {
 		log.Info("Hit - returning Value ")
+		fmt.Println("-----------------------hit! - returning value---------------------")
 		return val, nil
 	} else {
 		log.Info("Miss: - going through function ")
+		fmt.Println("-------------- Miss: - function--------------------------------")
 		err := ec.c.CallContext(
 			ctx, &hex, "eth_call", toCallArg(msg),
 			toBlockNumArg(blockNumber), overrides,

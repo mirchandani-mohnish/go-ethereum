@@ -533,11 +533,14 @@ func (ec *Client) CallContract(ctx context.Context, msg ethereum.CallMsg, blockN
 
 	val, ok := cache.Get(key)
 	log.Info("-----------------------eth_call---------------------")
+	fmt.Println("-----------------------eth_call---------------------")
 	if ok {
 		log.Info("Hit - returning Value ")
+		fmt.Println("Hit - returning Value")
 		return val, nil
 	} else {
 		log.Info("Miss: - going through function ")
+		fmt.Println("Miss: - function")
 		err := ec.c.CallContext(ctx, &hex, "eth_call", toCallArg(msg), toBlockNumArg(blockNumber))
 		if err != nil {
 			return nil, err
