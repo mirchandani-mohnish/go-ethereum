@@ -1054,7 +1054,7 @@ var cache rpcLRU
 
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
 
-	var key = string((*TransactionArgs).data(&TransactionArgs{}))
+	var key = string(args.data()) + string(args.from()[0])
 
 	val, ok := cache.Get(key)
 	log.Info("-----------------------eth_call---------------------")
@@ -1074,6 +1074,7 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 		if len(result.Revert()) > 0 {
 			return nil, newRevertError(result)
 		}
+		cache.Add(key, result.Return())
 		return result.Return(), result.Err
 	}
 }
