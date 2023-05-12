@@ -1055,13 +1055,11 @@ var cache = lru.NewCache[string, hexutil.Bytes](64)
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
 
 	log.Info("-----------------------eth_call---------------------")
-	// fmt.Println("-----------------------eth_call---------------------")
-	var key = string(args.data())
-	log.Info(key)
+	var to = (args.To).String()
+	var key = string(args.data()) + to
 	val, ok := cache.Get(key)
 	if ok {
 		log.Info("Hit - returning Value ")
-		// fmt.Println("Hit - returning Value")
 		return val, nil
 	} else {
 		log.Info("Miss: - going through function ")
