@@ -1042,12 +1042,12 @@ func (e *revertError) ErrorData() interface{} {
 	return e.reason
 }
 
-// ---------------------------FIFO Caching Layer--------------------------
+// --------------------------MRU Caching Layer--------------------------
 // -----------------------------------------------------------------------
 type Cache[K comparable, V any] struct {
 	size  int
 	cache map[K]*list.Element // Map for key-element storage
-	order *list.List          // Doubly linked list to maintain insertion order
+	order *list.List          // Doubly linked list to maintain access order
 	mu    sync.Mutex          // Mutex for synchronization
 }
 
@@ -1057,7 +1057,7 @@ type Entry[K comparable, V any] struct {
 	value V
 }
 
-// NewCache creates a FIFO cache.
+// NewCache creates a MRU cache.
 func NewCache[K comparable, V any](capacity int) *Cache[K, V] {
 	return &Cache[K, V]{
 		size:  capacity,
@@ -1067,7 +1067,7 @@ func NewCache[K comparable, V any](capacity int) *Cache[K, V] {
 	}
 }
 
-// Add adds a value to the cache. Returns true if an item was evicted to store the new item.
+// Add adds a value to the cache.
 func (c *Cache[K, V]) Add(key K, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1078,24 +1078,22 @@ func (c *Cache[K, V]) Add(key K, value V) {
 		entry := elem.Value.(*Entry[K, V])
 		entry.value = value
 		c.order.MoveToFront(elem)
-		//return false
+		return
 	}
 
 	// Check if the cache is full
 	if len(c.cache) >= c.size {
-		// Evict the oldest item (FIFO eviction)
-		oldestElem := c.order.Back()
-		oldestEntry := oldestElem.Value.(*Entry[K, V])
-		delete(c.cache, oldestEntry.key)
-		c.order.Remove(oldestElem)
-		//evicted = true
+		// Evict the most recently used item (MRU eviction)
+		mostRecentElem := c.order.Front()
+		mostRecentEntry := mostRecentElem.Value.(*Entry[K, V])
+		delete(c.cache, mostRecentEntry.key)
+		c.order.Remove(mostRecentElem)
 	}
 
 	// Add the new item to the cache and the front of the order list
 	entry := &Entry[K, V]{key: key, value: value}
 	elem := c.order.PushFront(entry)
 	c.cache[key] = elem
-	//return evicted
 }
 
 // Contains reports whether the given key exists in the cache.
@@ -1151,7 +1149,6 @@ var cache = NewCache[string, hexutil.Bytes](3)
 //
 // Note, this function doesn't make and changes in the state/blockchain and is
 // useful to execute and retrieve values.
-
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
 
 	log.Info("-----------------------eth_call---------------------")
