@@ -1048,24 +1048,23 @@ func (e *revertError) ErrorData() interface{} {
 // Note, this function doesn't make and changes in the state/blockchain and is
 // useful to execute and retrieve values.
 
-type rpcLRU = lru.Cache[string, hexutil.Bytes]
+// type rpcLRU = lru.Cache[string, hexutil.Bytes]
 
-var cache rpcLRU
+var cache = lru.NewCache[string, hexutil.Bytes](64)
 
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
 
-	var key = string(args.data()) + string(args.from()[0])
-
-	val, ok := cache.Get(key)
 	log.Info("-----------------------eth_call---------------------")
 	// fmt.Println("-----------------------eth_call---------------------")
+	var key = string(args.data())
+	log.Info(key)
+	val, ok := cache.Get(key)
 	if ok {
 		log.Info("Hit - returning Value ")
 		// fmt.Println("Hit - returning Value")
 		return val, nil
 	} else {
 		log.Info("Miss: - going through function ")
-		fmt.Println("Miss: - function")
 		result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
 		if err != nil {
 			return nil, err
@@ -1074,7 +1073,9 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 		if len(result.Revert()) > 0 {
 			return nil, newRevertError(result)
 		}
-		cache.Add(key, result.Return())
+		log.Info("Result received - adding to cache")
+		cache.Add(key, result.ReturnData)
+		log.Info("Data added to cache")
 		return result.Return(), result.Err
 	}
 }
