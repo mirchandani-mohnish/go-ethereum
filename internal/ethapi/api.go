@@ -1042,12 +1042,13 @@ func (e *revertError) ErrorData() interface{} {
 	return e.reason
 }
 
-// --------------------------MRU Caching Layer--------------------------
+// --------------------------LIFO Caching Layer--------------------------
 // -----------------------------------------------------------------------
+// Cache represents a LIFO cache.
 type Cache[K comparable, V any] struct {
 	size  int
 	cache map[K]*list.Element // Map for key-element storage
-	order *list.List          // Doubly linked list to maintain access order
+	stack *list.List          // Stack to maintain insertion order
 	mu    sync.Mutex          // Mutex for synchronization
 }
 
@@ -1057,12 +1058,12 @@ type Entry[K comparable, V any] struct {
 	value V
 }
 
-// NewCache creates a MRU cache.
+// NewCache creates a LIFO cache.
 func NewCache[K comparable, V any](capacity int) *Cache[K, V] {
 	return &Cache[K, V]{
 		size:  capacity,
 		cache: make(map[K]*list.Element),
-		order: list.New(),
+		stack: list.New(),
 		mu:    sync.Mutex{},
 	}
 }
@@ -1074,25 +1075,24 @@ func (c *Cache[K, V]) Add(key K, value V) {
 
 	// Check if the key already exists in the cache
 	if elem, ok := c.cache[key]; ok {
-		// Update the value and move the element to the front of the order list
+		// Update the value
 		entry := elem.Value.(*Entry[K, V])
 		entry.value = value
-		c.order.MoveToFront(elem)
 		return
 	}
 
 	// Check if the cache is full
 	if len(c.cache) >= c.size {
-		// Evict the most recently used item (MRU eviction)
-		mostRecentElem := c.order.Front()
-		mostRecentEntry := mostRecentElem.Value.(*Entry[K, V])
-		delete(c.cache, mostRecentEntry.key)
-		c.order.Remove(mostRecentElem)
+		// Evict the least recently inserted item (LIFO eviction)
+		oldestElem := c.stack.Back()
+		oldestEntry := oldestElem.Value.(*Entry[K, V])
+		delete(c.cache, oldestEntry.key)
+		c.stack.Remove(oldestElem)
 	}
 
-	// Add the new item to the cache and the front of the order list
+	// Add the new item to the cache and the top of the stack
 	entry := &Entry[K, V]{key: key, value: value}
-	elem := c.order.PushFront(entry)
+	elem := c.stack.PushBack(entry)
 	c.cache[key] = elem
 }
 
@@ -1114,8 +1114,6 @@ func (c *Cache[K, V]) Get(key K) (value V, ok bool) {
 	if ok {
 		entry := elem.Value.(*Entry[K, V])
 		value = entry.value
-		// Move the element to the front of the order list
-		c.order.MoveToFront(elem)
 	}
 	return value, ok
 }
