@@ -277,6 +277,8 @@ func prepare(ctx *cli.Context) {
 	log.Info("-----------------------Edited for checking-----------------------------")
 	log.Info("-----------------------------------------------------------------------")
 
+	log.Info("--- Starting Cache Service worker ---")
+	go ethapi.UpdateCache()
 	switch {
 	case ctx.IsSet(utils.RinkebyFlag.Name):
 		log.Info("Starting Geth on Rinkeby testnet...")

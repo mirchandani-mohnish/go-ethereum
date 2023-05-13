@@ -1050,14 +1050,60 @@ func (e *revertError) ErrorData() interface{} {
 
 // type rpcLRU = lru.Cache[string, hexutil.Bytes]
 
-var cache = lru.NewCache[string, hexutil.Bytes](64)
+var cache = lru.NewCache[string, hexutil.Bytes](5)
+
+type callData struct {
+	s             *BlockChainAPI
+	ctx           context.Context
+	args          TransactionArgs
+	blockNrOrHash rpc.BlockNumberOrHash
+	overrides     *StateOverride
+}
+
+var callDataCache = lru.NewCache[string, callData](5)
+
+func UpdateCache() {
+	for {
+		var keys = cache.Keys()
+		log.Info("Updating Cache")
+
+		for keyIndex := range keys {
+			var key = keys[keyIndex]
+			currentCallData, ok := callDataCache.Get(key)
+			if !ok {
+				continue
+			}
+
+			result, err := DoCall(currentCallData.ctx, currentCallData.s.b, currentCallData.args, currentCallData.blockNrOrHash, currentCallData.overrides, currentCallData.s.b.RPCEVMTimeout(), currentCallData.s.b.RPCGasCap())
+			// currentCacheValue, ok := cache.Get(key)
+			if err != nil {
+				log.Warn(err.Error())
+			}
+			cache.Add(key, result.ReturnData)
+			// if currentCacheValue == result.ReturnData {
+			// }
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+}
 
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
 
 	log.Info("-----------------------eth_call---------------------")
 	var to = (args.To).String()
 	var key = string(args.data()) + to
+
+	var tempCallData = callData{}
+	tempCallData.s = s
+	tempCallData.ctx = ctx
+	tempCallData.args = args
+	tempCallData.blockNrOrHash = blockNrOrHash
+	tempCallData.overrides = overrides
+
 	val, ok := cache.Get(key)
+	callDataCache.Add(key, tempCallData)
 	if ok {
 		log.Info("Hit - returning Value ")
 		return val, nil
