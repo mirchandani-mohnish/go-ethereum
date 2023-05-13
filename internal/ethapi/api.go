@@ -1160,7 +1160,7 @@ func (c *Cache[K, V]) Peek(key K) (value V, ok bool) {
 	return value, ok
 }
 
-var cache = MRUNewCache[string, callData](3)
+var cache = MRUNewCache[string, callData](5)
 
 type callData struct {
 	s             *BlockChainAPI
