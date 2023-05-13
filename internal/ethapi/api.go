@@ -1062,28 +1062,36 @@ type callData struct {
 
 var callDataCache = lru.NewCache[string, callData](5)
 
-func UpdateCache() {
+func (s *BlockChainAPI) UpdateCache() {
+
+	// currentRoot, err := ethclient.StorageTrieHash(nil, contractAddress, big.NewInt(0))
+	// if err != nil {
+	// 	return false, err
+	// }
 	for {
 		var keys = cache.Keys()
-		log.Info("Updating Cache")
+		log.Info("-------------Updating Cache-------------------")
 
 		for keyIndex := range keys {
 			var key = keys[keyIndex]
 			currentCallData, ok := callDataCache.Get(key)
 			if !ok {
+				log.Warn("Current Call Data Unavailable")
 				continue
 			}
 
-			result, err := DoCall(currentCallData.ctx, currentCallData.s.b, currentCallData.args, currentCallData.blockNrOrHash, currentCallData.overrides, currentCallData.s.b.RPCEVMTimeout(), currentCallData.s.b.RPCGasCap())
+			result, err := DoCall(currentCallData.ctx, s.b, currentCallData.args, currentCallData.blockNrOrHash, currentCallData.overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
 			// currentCacheValue, ok := cache.Get(key)
 			if err != nil {
 				log.Warn(err.Error())
+			} else {
+				cache.Add(key, result.ReturnData)
+				log.Info("Data added to cache for :::: " + key)
 			}
-			cache.Add(key, result.ReturnData)
 			// if currentCacheValue == result.ReturnData {
 			// }
 		}
-
+		log.Info("-----------End Update--------------------")
 		time.Sleep(5 * time.Second)
 	}
 
