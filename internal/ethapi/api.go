@@ -32,7 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/common/lru"
+//	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -48,6 +48,10 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/tyler-smith/go-bip39"
+	//"container/list"
+    //"math/rand"
+
+    "sync"
 )
 
 // EthereumAPI provides an API to access Ethereum related information.
@@ -1050,8 +1054,90 @@ func (e *revertError) ErrorData() interface{} {
 
 // type rpcLRU = lru.Cache[string, hexutil.Bytes]
 
-var cache = lru.NewCache[string, hexutil.Bytes](5)
+//var cache = lru.NewCache[string, hexutil.Bytes](5)
 
+// Random Replacement Cache Implementation
+
+
+type Cache struct {
+    capacity int
+    size     int
+    items    map[string]interface{}
+    order    []string
+    lock     sync.RWMutex
+}
+
+func RRNewCache(capacity int) *Cache {
+    return &Cache{
+        capacity: capacity,
+        items:    make(map[string]interface{}),
+    }
+}
+
+func (c *Cache) Add(key string,value hexutil.Bytes) {
+    c.lock.Lock()
+    defer c.lock.Unlock()
+
+    // if _, ok := c.items[key]; ok {
+    //     return
+    // }
+
+    if c.size == c.capacity {
+        // remove the least recently used item
+        delete(c.items, c.order[0])
+        c.order = c.order[1:]
+        c.size--
+    }
+
+    // add the new item to the end of the order slice
+    c.order = append(c.order, key)
+    c.items[key] = value
+    c.size++
+	log.Info("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+}
+
+func (c *Cache) Get(key string) (hexutil.Bytes, bool) {
+    c.lock.RLock()
+    defer c.lock.RUnlock()
+
+    value, ok := c.items[key]
+    // if !ok {
+    //     return nil, false
+    // }
+
+    // if the item is in the cache, move it to the front of the order slice
+    for i, k := range c.order {
+        if k == key {
+            // remove key from the slice
+            c.order = append(c.order[:i], c.order[i+1:]...)
+            // add key to the front of the slice
+            c.order = append([]string{key}, c.order...)
+            break
+        }
+    }
+
+    // convert value to hexutil.Bytes using type assertion
+    bytes, ok := value.(hexutil.Bytes)
+    if !ok {
+        return nil, false
+    }
+
+    return bytes, true
+}
+
+
+func (c *Cache) Purge() {
+    c.lock.Lock()
+    defer c.lock.Unlock()
+
+    c.items = make(map[string]interface{})
+    c.order = []string{}
+    c.size = 0
+}
+
+
+
+var cache = RRNewCache(20)
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
 
 	log.Info("-----------------------eth_call---------------------")
