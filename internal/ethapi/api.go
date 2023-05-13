@@ -1044,7 +1044,8 @@ func (e *revertError) ErrorData() interface{} {
 
 // --------------------------MRU Caching Layer--------------------------
 // -----------------------------------------------------------------------
-type Cache[K comparable, V any] struct {
+// Cache represents a MRU cache.
+type Cache[K string, V callData] struct {
 	size  int
 	cache map[K]*list.Element // Map for key-element storage
 	order *list.List          // Doubly linked list to maintain access order
@@ -1052,13 +1053,13 @@ type Cache[K comparable, V any] struct {
 }
 
 // Entry represents a key-value entry in the cache.
-type Entry[K comparable, V any] struct {
+type Entry[K string, V callData] struct {
 	key   K
 	value V
 }
 
 // NewCache creates a MRU cache.
-func NewCache[K comparable, V any](capacity int) *Cache[K, V] {
+func MRUNewCache[K string, V callData](capacity int) *Cache[K, V] {
 	return &Cache[K, V]{
 		size:  capacity,
 		cache: make(map[K]*list.Element),
@@ -1078,6 +1079,7 @@ func (c *Cache[K, V]) Add(key K, value V) {
 		entry := elem.Value.(*Entry[K, V])
 		entry.value = value
 		c.order.MoveToFront(elem)
+		log.Info("-----------------------Key exists in cache---------------------")
 		return
 	}
 
@@ -1088,12 +1090,28 @@ func (c *Cache[K, V]) Add(key K, value V) {
 		mostRecentEntry := mostRecentElem.Value.(*Entry[K, V])
 		delete(c.cache, mostRecentEntry.key)
 		c.order.Remove(mostRecentElem)
+		log.Info("-----------------------Cache FULL, Older entry Deleted---------------------")
 	}
 
 	// Add the new item to the cache and the front of the order list
 	entry := &Entry[K, V]{key: key, value: value}
 	elem := c.order.PushFront(entry)
 	c.cache[key] = elem
+	log.Info("Data added to cache for :::: " + string(key))
+	// log.Info("Data added to cache for :::: " + string(value))
+	log.Info("-----------------------Added to cache---------------------")
+}
+
+// Keys returns all the keys in the cache
+func (c *Cache[K, V]) Keys() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	keys := make([]string, 0, len(c.cache))
+	for key := range c.cache {
+		keys = append(keys, string(key))
+	}
+	return keys
 }
 
 // Contains reports whether the given key exists in the cache.
@@ -1117,6 +1135,7 @@ func (c *Cache[K, V]) Get(key K) (value V, ok bool) {
 		// Move the element to the front of the order list
 		c.order.MoveToFront(elem)
 	}
+	log.Info("-----------------------Get Method---------------------")
 	return value, ok
 }
 
@@ -1141,7 +1160,53 @@ func (c *Cache[K, V]) Peek(key K) (value V, ok bool) {
 	return value, ok
 }
 
-var cache = NewCache[string, hexutil.Bytes](3)
+var cache = MRUNewCache[string, callData](3)
+
+type callData struct {
+	s             *BlockChainAPI
+	ctx           context.Context
+	args          TransactionArgs
+	blockNrOrHash rpc.BlockNumberOrHash
+	overrides     *StateOverride
+	result        hexutil.Bytes
+}
+
+func UpdateCache() {
+
+	// currentRoot, err := ethclient.StorageTrieHash(nil, contractAddress, big.NewInt(0))
+	// if err != nil {
+	// 	return false, err
+	// }
+	for {
+		var keys = cache.Keys()
+		log.Info("-------------Updating Cache-------------------")
+
+		for keyIndex := range keys {
+			var key = keys[keyIndex]
+			currentCallData, ok := cache.Get(key)
+			if !ok {
+				log.Warn("Current Call Data Unavailable")
+				continue
+			}
+			var s = currentCallData.s
+
+			result, err := DoCall(currentCallData.ctx, s.b, currentCallData.args, currentCallData.blockNrOrHash, currentCallData.overrides, 30*time.Second, s.b.RPCGasCap())
+			// currentCacheValue, ok := cache.Get(key)
+			if err != nil {
+				log.Warn(err.Error())
+			} else {
+				currentCallData.result = result.ReturnData
+				cache.Add(key, currentCallData)
+				log.Info("Data added to cache for :::: " + key)
+			}
+			// if currentCacheValue == result.ReturnData {
+			// }
+		}
+		log.Info("-----------End Update--------------------")
+		time.Sleep(10 * time.Second)
+	}
+
+}
 
 // Call executes the given transaction on the state for the given block number.
 //
@@ -1154,12 +1219,20 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 	log.Info("-----------------------eth_call---------------------")
 	var to = (args.To).String()
 	var key = string(args.data()) + to
+
 	val, ok := cache.Get(key)
+	// callDataCache.Add(key, tempCallData)
 	if ok {
 		log.Info("Hit - returning Value ")
-		return val, nil
+		return val.result, nil
 	} else {
 		log.Info("Miss: - going through function ")
+		var tempCallData = callData{}
+		tempCallData.s = s
+		tempCallData.ctx = ctx
+		tempCallData.args = args
+		tempCallData.blockNrOrHash = blockNrOrHash
+		tempCallData.overrides = overrides
 		result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
 		if err != nil {
 			return nil, err
@@ -1168,8 +1241,10 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 		if len(result.Revert()) > 0 {
 			return nil, newRevertError(result)
 		}
+
 		log.Info("Result received - adding to cache")
-		cache.Add(key, result.ReturnData)
+		tempCallData.result = result.ReturnData
+		cache.Add(key, tempCallData)
 		log.Info("Data added to cache")
 		return result.Return(), result.Err
 	}
