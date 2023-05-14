@@ -17,12 +17,14 @@
 package ethapi
 
 import (
+	"container/list"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
@@ -1040,23 +1042,251 @@ func (e *revertError) ErrorData() interface{} {
 	return e.reason
 }
 
+// --------------------------LIFO Caching Layer--------------------------
+// -----------------------------------------------------------------------
+// Cache represents a LIFO cache.
+type Cache[K string, V callData] struct {
+	size  int
+	cache map[K]*list.Element // Map for key-element storage
+	stack *list.List          // Stack to maintain insertion order
+	mu    sync.Mutex          // Mutex for synchronization
+}
+
+// Entry represents a key-value entry in the cache.
+type Entry[K string, V callData] struct {
+	key   K
+	value V
+}
+
+// NewCache creates a LIFO cache.
+func NewCache[K string, V callData](capacity int) *Cache[K, V] {
+	return &Cache[K, V]{
+		size:  capacity,
+		cache: make(map[K]*list.Element),
+		stack: list.New(),
+		mu:    sync.Mutex{},
+	}
+}
+
+// Add adds a value to the cache.
+func (c *Cache[K, V]) Add(key K, value V) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check if the key already exists in the cache
+	if elem, ok := c.cache[key]; ok {
+		// Update the value
+		entry := elem.Value.(*Entry[K, V])
+		entry.value = value
+		log.Info("-----------------------Key exists in cache---------------------")
+		return
+	}
+
+	// Check if the cache is full
+	if len(c.cache) >= c.size {
+		// Evict the least recently inserted item (LIFO eviction)
+		oldestElem := c.stack.Back()
+		oldestEntry := oldestElem.Value.(*Entry[K, V])
+		delete(c.cache, oldestEntry.key)
+		c.stack.Remove(oldestElem)
+		log.Info("-----------------------Cache FULL, Older entry Deleted---------------------")
+	}
+
+	// Add the new item to the cache and the top of the stack
+	entry := &Entry[K, V]{key: key, value: value}
+	elem := c.stack.PushBack(entry)
+	c.cache[key] = elem
+	log.Info("Data added to cache for :::: " + string(key))
+	// log.Info("Data added to cache for :::: " + string(value))
+	log.Info("-----------------------Added to cache---------------------")
+	//return 0
+}
+func (c *Cache[K, V]) Keys() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	keys := make([]string, 0, len(c.cache))
+	for key := range c.cache {
+		keys = append(keys, string(key))
+	}
+	return keys
+}
+
+// Contains reports whether the given key exists in the cache.
+func (c *Cache[K, V]) Contains(key K) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	_, ok := c.cache[key]
+	return ok
+}
+
+// Get retrieves a value from the cache. This marks the key as recently used.
+func (c *Cache[K, V]) Get(key K) (value V, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	elem, ok := c.cache[key]
+	if ok {
+		entry := elem.Value.(*Entry[K, V])
+		value = entry.value
+	}
+	log.Info("-----------------------Get Method---------------------")
+	return value, ok
+}
+
+// Len returns the current number of items in the cache.
+func (c *Cache[K, V]) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.cache)
+}
+
+// Peek retrieves a value from the cache, but does not mark the key as recently used.
+func (c *Cache[K, V]) Peek(key K) (value V, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	elem, ok := c.cache[key]
+	if ok {
+		entry := elem.Value.(*Entry[K, V])
+		value = entry.value
+	}
+	return value, ok
+}
+
+var cache = NewCache(5)
+
+type callData struct {
+	s             *BlockChainAPI
+	ctx           context.Context
+	args          TransactionArgs
+	blockNrOrHash rpc.BlockNumberOrHash
+	overrides     *StateOverride
+	result        hexutil.Bytes
+}
+
+func UpdateCache() {
+
+	// currentRoot, err := ethclient.StorageTrieHash(nil, contractAddress, big.NewInt(0))
+	// if err != nil {
+	// 	return false, err
+	// }
+	for {
+		var keys = cache.Keys()
+		log.Info("-------------Updating Cache-------------------")
+
+		for keyIndex := range keys {
+			var key = keys[keyIndex]
+			currentCallData, ok := cache.Get(key)
+			if !ok {
+				log.Warn("Current Call Data Unavailable")
+				continue
+			}
+			var s = currentCallData.s
+
+			result, err := DoCall(currentCallData.ctx, s.b, currentCallData.args, currentCallData.blockNrOrHash, currentCallData.overrides, 30*time.Second, s.b.RPCGasCap())
+			// currentCacheValue, ok := cache.Get(key)
+			if err != nil {
+				log.Warn(err.Error())
+			} else {
+				currentCallData.result = result.ReturnData
+				cache.Add(key, currentCallData)
+				log.Info("Data added to cache for :::: " + key)
+			}
+			// if currentCacheValue == result.ReturnData {
+			// }
+		}
+		log.Info("-----------End Update--------------------")
+		time.Sleep(10 * time.Second)
+	}
+
+}
+
 // Call executes the given transaction on the state for the given block number.
 //
 // Additionally, the caller can specify a batch of contract for fields overriding.
 //
 // Note, this function doesn't make and changes in the state/blockchain and is
 // useful to execute and retrieve values.
+
+var hits = 0
+var misses = 0
+
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
-	result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
-	if err != nil {
-		return nil, err
+
+	log.Info("-----------------------eth_call---------------------")
+	var to = (args.To).String()
+	var key = string(args.data()) + to
+
+	val, ok := cache.Get(key)
+	// callDataCache.Add(key, tempCallData)
+	var hitMissRatio = (float32(hits) / float32(hits+misses+1))
+	hitMissRatioString := fmt.Sprintf("%f", hitMissRatio)
+	log.Info("Current Hit Miss Ratio:" + hitMissRatioString)
+	log.Info("Number of calls: " + fmt.Sprintf("%d", (hits+misses)))
+	if ok {
+		log.Info("Hit - returning Value ")
+		hits += 1
+		return val.result, nil
+	} else {
+		log.Info("Miss: - going through function ")
+		misses += 1
+		var tempCallData = callData{}
+		tempCallData.s = s
+		tempCallData.ctx = ctx
+		tempCallData.args = args
+		tempCallData.blockNrOrHash = blockNrOrHash
+		tempCallData.overrides = overrides
+		result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
+		if err != nil {
+			return nil, err
+		}
+		// If the result contains a revert reason, try to unpack and return it.
+		if len(result.Revert()) > 0 {
+			return nil, newRevertError(result)
+		}
+
+		log.Info("Result received - adding to cache")
+		tempCallData.result = result.ReturnData
+		cache.Add(key, tempCallData)
+		log.Info("Data added to cache")
+		return result.Return(), result.Err
 	}
-	// If the result contains a revert reason, try to unpack and return it.
-	if len(result.Revert()) > 0 {
-		return nil, newRevertError(result)
-	}
-	return result.Return(), result.Err
 }
+
+// Call executes the given transaction on the state for the given block number.
+//
+// Additionally, the caller can specify a batch of contract for fields overriding.
+//
+// // Note, this function doesn't make and changes in the state/blockchain and is
+// // useful to execute and retrieve values.
+// func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
+
+// 	log.Info("-----------------------eth_call---------------------")
+// 	var to = (args.To).String()
+// 	var key = string(args.data()) + to
+// 	val, ok := cache.Get(key)
+// 	if ok {
+// 		log.Info("Hit - returning Value ")
+// 		return val, nil
+// 	} else {
+// 		log.Info("Miss: - going through function ")
+// 		result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		// If the result contains a revert reason, try to unpack and return it.
+// 		if len(result.Revert()) > 0 {
+// 			return nil, newRevertError(result)
+// 		}
+// 		log.Info("Result received - adding to cache")
+// 		cache.Add(key, result.ReturnData)
+// 		log.Info("Data added to cache")
+// 		return result.Return(), result.Err
+// 	}
+// }
 
 func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, gasCap uint64) (hexutil.Uint64, error) {
 	// Binary search the gas requirement, as it may be higher than the amount used
