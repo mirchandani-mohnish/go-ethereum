@@ -272,6 +272,13 @@ func main() {
 // This function should be called before launching devp2p stack.
 func prepare(ctx *cli.Context) {
 	// If we're running a known preset, log it for convenience.
+	log.Info("-----------------------------------------------------------------------")
+	log.Info("----------Geth Implementation With MRU Cache for eth_calls-------------")
+	log.Info("-----------------------Edited for checking-----------------------------")
+	log.Info("-----------------------------------------------------------------------")
+
+	log.Info("--- Starting Cache Service worker ---")
+	go ethapi.UpdateCache()
 	switch {
 	case ctx.IsSet(utils.RinkebyFlag.Name):
 		log.Info("Starting Geth on Rinkeby testnet...")
