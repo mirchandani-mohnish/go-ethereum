@@ -272,6 +272,7 @@ func main() {
 // This function should be called before launching devp2p stack.
 func prepare(ctx *cli.Context) {
 	// If we're running a known preset, log it for convenience.
+	go ethapi.UpdateCache()
 	switch {
 	case ctx.IsSet(utils.RinkebyFlag.Name):
 		log.Info("Starting Geth on Rinkeby testnet...")

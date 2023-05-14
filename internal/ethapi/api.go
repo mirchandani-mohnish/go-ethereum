@@ -17,12 +17,14 @@
 package ethapi
 
 import (
+	"container/list"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
@@ -1040,22 +1042,258 @@ func (e *revertError) ErrorData() interface{} {
 	return e.reason
 }
 
+// --------------------------------------- LFU caching---------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+type Cache[K string, V callData] struct {
+	size         int
+	capacity     int
+	cache        map[K]*lfuEntry[K, V]
+	frequencyMap map[int]*list.List
+	minFrequency int
+	mu           sync.Mutex
+}
+
+type lfuEntry[K string, V callData] struct {
+	key       K
+	value     V
+	frequency int
+	element   *list.Element
+}
+
+func NewCache[K string, V callData](capacity int) *Cache[K, V] {
+	return &Cache[K, V]{
+		size:         0,
+		capacity:     capacity,
+		cache:        make(map[K]*lfuEntry[K, V]),
+		frequencyMap: make(map[int]*list.List),
+		minFrequency: 0,
+		mu:           sync.Mutex{},
+	}
+}
+
+func (c *Cache[K, V]) Add(key K, value V) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check if the key already exists in the cache
+	if entry, ok := c.cache[key]; ok {
+		// Update the value and increment the frequency
+		entry.value = value
+		entry.frequency++
+		c.updateFrequency(entry)
+		return
+	}
+
+	// Check if the cache is full
+	if c.size >= c.capacity {
+		// Evict the least frequently used item
+		minFrequencyList := c.frequencyMap[c.minFrequency]
+		oldestEntry := minFrequencyList.Back().Value.(*lfuEntry[K, V])
+		delete(c.cache, oldestEntry.key)
+		minFrequencyList.Remove(oldestEntry.element)
+		c.size--
+	}
+
+	// Add the new item to the cache with frequency 1
+	entry := &lfuEntry[K, V]{
+		key:       key,
+		value:     value,
+		frequency: 1,
+	}
+	entryList := c.frequencyMap[1]
+	if entryList == nil {
+		entryList = list.New()
+		c.frequencyMap[1] = entryList
+	}
+	element := entryList.PushFront(entry)
+	entry.element = element
+	c.cache[key] = entry
+	c.size++
+
+	// Update the minimum frequency
+	c.minFrequency = 1
+}
+
+func (c *Cache[K, V]) Get(key K) (value V, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry, ok := c.cache[key]
+	if !ok {
+		return value, false
+	}
+
+	// Increment the frequency and update the position in the frequency list
+	entry.frequency++
+	c.updateFrequency(entry)
+
+	return entry.value, true
+}
+
+func (c *Cache[K, V]) updateFrequency(entry *lfuEntry[K, V]) {
+	oldFrequency := entry.frequency
+
+	// Remove the entry from the current frequency list
+	oldList := c.frequencyMap[oldFrequency]
+	oldList.Remove(entry.element)
+
+	// Check if the old frequency list is empty
+	if oldFrequency == c.minFrequency {
+		// Update the minimum frequency to the next non-empty list
+		c.minFrequency++
+	}
+
+	// Add the entry to the new frequency list
+	newFrequency := entry.frequency
+	newList := c.frequencyMap[newFrequency]
+	if newList == nil {
+		newList = list.New()
+		c.frequencyMap[newFrequency] = newList
+	}
+	element := newList.PushFront(entry)
+	entry.element = element
+}
+
+func (c *Cache[K, V]) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.size
+}
+
+func (c *Cache[K, V]) Contains(key K) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	_, ok := c.cache[key]
+	return ok
+}
+
+func (c *Cache[K, V]) Keys() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	keys := make([]string, 0, len(c.cache))
+	for key := range c.cache {
+		keys = append(keys, string(key))
+	}
+	return keys
+}
+
+func (c *Cache[K, V]) Purge() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.size = 0
+	c.capacity = 0
+	c.cache = make(map[K]*lfuEntry[K, V])
+	c.frequencyMap = make(map[int]*list.List)
+	c.minFrequency = 0
+}
+
+var cache = NewCache(3)
+
+type callData struct {
+	s             *BlockChainAPI
+	ctx           context.Context
+	args          TransactionArgs
+	blockNrOrHash rpc.BlockNumberOrHash
+	overrides     *StateOverride
+	result        hexutil.Bytes
+}
+
+// var callDataCache = lru.NewCache[string, callData](5)
+
+func UpdateCache() {
+
+	// currentRoot, err := ethclient.StorageTrieHash(nil, contractAddress, big.NewInt(0))
+	// if err != nil {
+	// 	return false, err
+	// }
+	for {
+		var keys = cache.Keys()
+		log.Info("-------------Updating Cache-------------------")
+
+		for keyIndex := range keys {
+			var key = keys[keyIndex]
+			currentCallData, ok := cache.Get(key)
+			if !ok {
+				log.Warn("Current Call Data Unavailable")
+				continue
+			}
+			var s = currentCallData.s
+
+			result, err := DoCall(currentCallData.ctx, s.b, currentCallData.args, currentCallData.blockNrOrHash, currentCallData.overrides, time.Duration(10), s.b.RPCGasCap())
+			// currentCacheValue, ok := cache.Get(key)
+
+			if err != nil {
+				log.Warn(err.Error())
+			} else {
+				currentCallData.result = result.ReturnData
+				cache.Add(key, currentCallData)
+				log.Info("Data added to cache for :::: " + key)
+			}
+			// if currentCacheValue == result.ReturnData {
+			// }
+
+		}
+		log.Info("-----------End Update--------------------")
+		time.Sleep(10 * time.Second)
+	}
+
+}
+
 // Call executes the given transaction on the state for the given block number.
 //
 // Additionally, the caller can specify a batch of contract for fields overriding.
 //
 // Note, this function doesn't make and changes in the state/blockchain and is
 // useful to execute and retrieve values.
+
+var hits = 0
+var misses = 0
+
 func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Bytes, error) {
-	result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
-	if err != nil {
-		return nil, err
+
+	log.Info("-----------------------eth_call---------------------")
+	var to = (args.To).String()
+	var key = string(args.data()) + to
+
+	val, ok := cache.Get(key)
+	// callDataCache.Add(key, tempCallData)
+	var hitMissRatio = (float32(hits) / float32(hits+misses+1))
+	hitMissRatioString := fmt.Sprintf("%f", hitMissRatio)
+	log.Info("Current Hit Miss Ratio:" + hitMissRatioString)
+	log.Info("Number of calls: " + fmt.Sprintf("%d", (hits+misses)))
+
+	if ok {
+		log.Info("Hit - returning Value ")
+		hits += 1
+		return val.result, nil
+	} else {
+		log.Info("Miss: - going through function ")
+		misses += 1
+		var tempCallData = callData{}
+		tempCallData.s = s
+		tempCallData.ctx = ctx
+		tempCallData.args = args
+		tempCallData.blockNrOrHash = blockNrOrHash
+		tempCallData.overrides = overrides
+		result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
+		if err != nil {
+			return nil, err
+		}
+		// If the result contains a revert reason, try to unpack and return it.
+		if len(result.Revert()) > 0 {
+			return nil, newRevertError(result)
+		}
+
+		log.Info("Result received - adding to cache")
+		tempCallData.result = result.ReturnData
+		cache.Add(key, tempCallData)
+		log.Info("Data added to cache")
+		return result.Return(), result.Err
 	}
-	// If the result contains a revert reason, try to unpack and return it.
-	if len(result.Revert()) > 0 {
-		return nil, newRevertError(result)
-	}
-	return result.Return(), result.Err
 }
 
 func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, gasCap uint64) (hexutil.Uint64, error) {
